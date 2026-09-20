@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Générateur de Checklists RA</title>
+    <!-- Tailwind CSS pour le style rapide -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue.js 3 pour la logique dynamique -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans p-6">
+
+<div id="app" class="max-w-4xl mx-auto bg-white rounded-lg shadow-md p-6">
+    <h1 class="text-2xl font-bold text-blue-600 mb-6 border-b pb-2">Générateur de Checklists - RetroAchievements</h1>
+
+    <!-- Paramètres Globaux -->
+    <div class="mb-6">
+        <label class="block font-semibold mb-2">Nom d'utilisateur RA :</label>
+        <input v-model="username" type="text" 
+               class="w-full md:w-1/2 p-2 border rounded focus:outline-none focus:border-blue-500">
+    </div>
+
+    <!-- Navigation des Menus -->
+    <div class="flex space-x-4 border-b mb-6">
+        <button @click="activeTab = 'game'" 
+                :class="{'border-b-2 border-blue-600 font-bold text-blue-600': activeTab === 'game'}"
+                class="pb-2 px-2 hover:text-blue-500">
+            Checklist de Jeux
+        </button>
+        <button @click="activeTab = 'achievement'" 
+                :class="{'border-b-2 border-blue-600 font-bold text-blue-600': activeTab === 'achievement'}"
+                class="pb-2 px-2 hover:text-blue-500">
+            Checklist de Succès
+        </button>
+    </div>
+
+    <!-- Gestion des groupes pour l'onglet actif -->
+    <div class="space-y-4 mb-6">
+        <div v-for="(group, index) in activeList" :key="index" class="p-4 border rounded bg-gray-50 flex flex-col md:flex-row gap-4 items-start">
+            
+            <div class="w-full md:w-1/3">
+                <label class="block text-sm font-semibold text-gray-600 mb-1">Nom du groupe <span class="text-gray-400 font-normal">(Optionnel)</span></label>
+                <input v-model="group.name" type="text" placeholder="Ex: Group 1" 
+                       class="w-full p-2 border rounded focus:outline-none focus:border-blue-500">
+            </div>
+
+            <div class="w-full md:w-2/3">
+                <label class="block text-sm font-semibold text-gray-600 mb-1">IDs ou Liens (séparés par des espaces, virgules ou sauts de ligne)</label>
+                <textarea v-model="group.ids" rows="3" placeholder="Ex: 2588, https://retroachievements.org/game/14415" 
+                          class="w-full p-2 border rounded focus:outline-none focus:border-blue-500"></textarea>
+            </div>
+
+            <button @click="removeGroup(index)" class="mt-6 px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600">
+                Retirer
+            </button>
+        </div>
+    </div>
+
+    <!-- Boutons d'action -->
+    <div class="flex flex-wrap gap-4 mb-8">
+        <button @click="addGroup" class="px-4 py-2 bg-green-500 text-white font-semibold rounded hover:bg-green-600">
+            + Ajouter un groupe
+        </button>
+        <button @click="resetData" class="px-4 py-2 bg-gray-500 text-white font-semibold rounded hover:bg-gray-600">
+            Tout réinitialiser
+        </button>
+    </div>
+
+    <!-- Résultat généré -->
+    <div class="mt-8 p-4 bg-blue-50 border border-blue-200 rounded">
+        <h2 class="text-lg font-bold text-blue-800 mb-2">Lien généré :</h2>
+        <div class="flex gap-2">
+            <input type="text" readonly :value="generatedUrl" 
+                   class="w-full p-2 border rounded bg-white text-gray-600 select-all">
+            <button @click="copyToClipboard" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 whitespace-nowrap">
+                Copier
+            </button>
+        </div>
+        <p v-if="copySuccess" class="text-green-600 text-sm mt-2">Copié dans le presse-papiers !</p>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, computed, watch, onMounted } = Vue;
+
+createApp({
+    setup() {
+        const username = ref('');
+        const activeTab = ref('game');
+        const copySuccess = ref(false);
+
+        // Listes de données par défaut
+        const lists = ref({
+            game: [{ name: '', ids: '' }],
+            achievement: [{ name: '', ids: '' }]
+        });
+
+        // Charger les données du LocalStorage s'il y en a
+        onMounted(() => {
+            const savedData = localStorage.getItem('raChecklistData');
+            if (savedData) {
+                const parsed = JSON.parse(savedData);
+                username.value = parsed.username || '';
+                lists.value = parsed.lists || lists.value;
+            }
+        });
+
+        // Sauvegarder automatiquement à chaque changement
+        watch([username, lists], () => {
+            localStorage.setItem('raChecklistData', JSON.stringify({
+                username: username.value,
+                lists: lists.value
+            }));
+        }, { deep: true });
+
+        const activeList = computed(() => lists.value[activeTab.value]);
+
+        const addGroup = () => {
+            lists.value[activeTab.value].push({ name: '', ids: '' });
+        };
+
+        const removeGroup = (index) => {
+            lists.value[activeTab.value].splice(index, 1);
+        };
+
+        // Nouvelle fonction de réinitialisation
+        const resetData = () => {
+            if (confirm("Êtes-vous sûr de vouloir vider tous les groupes ? Votre pseudo sera conservé.")) {
+                lists.value = {
+                    game: [{ name: '', ids: '' }],
+                    achievement: [{ name: '', ids: '' }]
+                };
+            }
+        };
+
+        const strictEncode = (str) => {
+            return encodeURIComponent(str).replace(/[!'()*]/g, escape);
+        };
+
+        // Génération dynamique de l'URL
+        const generatedUrl = computed(() => {
+            if (!username.value) return "Veuillez entrer un nom d'utilisateur.";
+            
+            const baseUrl = `https://retroachievements.org/user/${strictEncode(username.value.trim())}/${activeTab.value}-checklist?list=`;
+            
+            const groupsStr = activeList.value
+                .filter(g => g.ids.trim() !== '')
+                .map(g => {
+                    const cleanIds = g.ids.trim().split(/[\s,]+/)
+                        .map(item => {
+                            const urlMatch = item.match(/(?:game|achievement)\/(\d+)/i);
+                            if (urlMatch) return urlMatch[1];
+                            if (item.match(/^\d+$/)) return item;
+                            return null;
+                        })
+                        .filter(id => id !== null)
+                        .join(',');
+
+                    if (!cleanIds) return null;
+
+                    const groupName = g.name.trim();
+                    return groupName ? `${groupName}:${cleanIds}` : cleanIds;
+                })
+                .filter(Boolean)
+                .join('|');
+
+            if (!groupsStr) return "Ajoutez au moins un ID ou un lien valide pour générer le lien.";
+
+            return baseUrl + strictEncode(groupsStr);
+        });
+
+        const copyToClipboard = () => {
+            navigator.clipboard.writeText(generatedUrl.value).then(() => {
+                copySuccess.value = true;
+                setTimeout(() => copySuccess.value = false, 2000);
+            });
+        };
+
+        return {
+            username, activeTab, activeList, addGroup, removeGroup, resetData, generatedUrl, copyToClipboard, copySuccess
+        }
+    }
+}).mount('#app')
+</script>
+</body>
+</html>
